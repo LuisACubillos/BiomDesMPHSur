@@ -2,7 +2,7 @@
 
 Aplicación Shiny interactiva para estimar y visualizar la biomasa desovante de anchoveta y sardina común en la zona centro-sur de Chile, mediante el **Método de Producción Diaria de Huevos (MPDH)**.
 
-Desarrollado en el marco del servicio de asesoría IFOP–UdeC (Contrato N° 49656-071), año 2025.
+Desarrollado por Luis A. Cubillos - CEPMAR SpA
 
 ---
 
@@ -14,8 +14,7 @@ AnalisisR/
 ├── Data/
 │   └── MPDH_datos.xlsx       # Libro de datos consolidado (lances + parametros)
 ├── Rscripts/                 # Scripts R de análisis (estimador, CV, etc.)
-├── Figs/                     # Figuras generadas
-└── Respuesta_Evaluador_MPDH2025.Rmd   # Documento de respuesta al revisor externo
+└──  Figs/                    # Figuras generadas
 ```
 
 ---
@@ -127,4 +126,4 @@ Stauffer, G. & Picquelle, S. (1980). Estimates of the 1980 spawning biomass of t
 
 ---
 
-*Luis Cubillos — Universidad de Concepción / IFOP, 2025*
+*Luis Cubillos — CEPMAR SpA, 2026*
