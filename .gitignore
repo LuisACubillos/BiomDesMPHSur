@@ -1,0 +1,24 @@
+# R
+.Rhistory
+.RData
+.Rproj.user/
+*.Rproj.user
+renv/
+renv.lock
+
+# Datos sensibles / grandes — no versionar
+# (mantener MPDH_datos.xlsx en el repo; excluir archivos fuente anuales si son grandes)
+Data/Adultos/AvgReprodParms_lances_*.xlsx
+Data/Adultos/AvgReprodParms_total_*.xlsx
+Data/Adultos/*.csv
+
+# Salidas compiladas de Rmd
+*.html
+*.pdf
+*.tex
+*.log
+Respuesta_Evaluador_MPDH2025.*
+
+# OS
+.DS_Store
+Thumbs.db
