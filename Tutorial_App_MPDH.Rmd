@@ -1,0 +1,461 @@
+---
+title: "Guía de uso de la app MPDH"
+subtitle: "Biomasa desovante de anchoveta y sardina común — Centro-Sur de Chile"
+author: "Luis A. Cubillos | CEPMAR SpA"
+date: "`r format(Sys.Date(), '%d-%m-%Y')`"
+output:
+  html_document:
+    theme: flatly
+    highlight: tango
+    toc: true
+    toc_float:
+      collapsed: false
+    toc_depth: 3
+    number_sections: true
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment = "", message = FALSE, warning = FALSE)
+
+# Se cargan las funciones de la app (no se lanza la app)
+app_env <- new.env()
+sys.source("app_MPDH_Biomasa.R", envir = app_env)
+load_data_from_path <- app_env$load_data_from_path
+calc_zone_biomass   <- app_env$calc_zone_biomass
+
+library(dplyr)
+library(tidyr)
+library(knitr)
+
+xlsx <- "Data/MPDH_datos.xlsx"
+d    <- load_data_from_path(xlsx)
+```
+
+<style>
+body { font-size: 15px; }
+h1, h2, h3 { color: #2166ac; }
+.nota {
+  background-color: #eaf3fb;
+  border-left: 4px solid #2166ac;
+  padding: 10px 16px;
+  margin: 16px 0;
+  border-radius: 4px;
+}
+.alerta {
+  background-color: #fff8e1;
+  border-left: 4px solid #f9a825;
+  padding: 10px 16px;
+  margin: 16px 0;
+  border-radius: 4px;
+}
+</style>
+
+# Introducción
+
+La app `app_MPDH_Biomasa.R` estima la **biomasa desovante** de anchoveta
+(*Engraulis ringens*) y sardina común (*Strangomera bentincki*) en las zonas
+Centro y Sur, con el **Método de Producción Diaria de Huevos (MPDH)**. Además
+calcula su coeficiente de variación (CV) con el método delta.
+
+La app lee un único archivo Excel y, para cada año, especie y zona presentes,
+calcula:
+
+- la biomasa desovante $B$ (toneladas),
+- su CV (%) y su intervalo de confianza al 95 %,
+- la contribución de cada parámetro a la varianza de $B$.
+
+Los resultados se muestran en cuatro pestañas y se pueden descargar como
+reporte en Word (`.docx`) o HTML.
+
+Esta guía describe (1) cómo ejecutar la app, (2) cómo preparar el Excel,
+(3) las fórmulas que usa y (4) cómo leer cada pestaña. Los ejemplos se
+calculan en vivo con `r xlsx`, así que al recompilar la guía se ven los
+números actuales.
+
+# Instalación y ejecución
+
+Requiere R ≥ 4.2 y los paquetes:
+
+```{r, eval=FALSE}
+install.packages(c(
+  "shiny", "bslib", "readxl", "dplyr", "tidyr",
+  "ggplot2", "scales", "officer", "flextable"
+))
+```
+
+Para lanzar la app, abra el proyecto `BiomDesMPHSur.Rproj` en RStudio y
+ejecute:
+
+```{r, eval=FALSE}
+shiny::runApp("app_MPDH_Biomasa.R")
+```
+
+Al abrirse, la app muestra *"Sin datos cargados"*. Use el botón
+**Abrir Excel…** de la barra superior para elegir el archivo; puede estar en
+cualquier carpeta. Todas las pestañas se actualizan al cargarlo.
+
+# Configuración del archivo Excel
+
+## Estructura general
+
+| Hoja | Obligatoria | Contenido |
+|------|:-----------:|-----------|
+| `lances` | Sí | Un registro por lance de pesca de adultos |
+| `parametros` | Sí | Media y CV de cada parámetro MPDH por año, especie y zona |
+| `historico` | No | Biomasa total por especie de años anteriores (serie histórica) |
+
+<div class="nota">
+**Convenciones comunes a todas las hojas**
+
+- Los nombres de hoja y de columna distinguen mayúsculas y minúsculas.
+- Los valores faltantes se escriben como celda vacía o con el texto `NA`.
+- `Especie` toma los valores `Anchoveta` o `Sardina` (la app muestra
+  "Sardina común").
+- `Zona` toma los valores `Centro` o `Sur`.
+- No deje espacios al inicio o final de los textos: `"Sur "` no coincide con `"Sur"`.
+</div>
+
+## Hoja `lances`
+
+Cada fila es un lance de pesca. La app usa estas columnas:
+
+| Columna | Descripción | Unidad |
+|---------|-------------|--------|
+| `year` | Año del crucero | — |
+| `Especie` | `Anchoveta` / `Sardina` | — |
+| `Zona` | `Centro` / `Sur` (también se acepta `Zone`) | — |
+| `Haul` | Número de lance | — |
+| `m` | Número de hembras maduras analizadas en el lance (peso de ponderación) | n.º |
+| `F` | Fecundidad parcial media del lance | huevos · hembra⁻¹ |
+| `W` | Peso promedio de hembras maduras | g |
+| `S` | Fracción diaria de hembras desovantes | proporción (0–1) |
+
+El archivo puede tener otras columnas (`R`, `R05`, `S0`, `S1`, `yy`,
+`Hora_Dec`, `LT`, …). La app no las usa en los cálculos.
+
+Ejemplo (primeras filas del archivo actual):
+
+```{r}
+d$lances %>%
+  select(year, Especie, Zona, Haul, m, F, W, S) %>%
+  head(6) %>%
+  kable(digits = 3)
+```
+
+Número de lances por año, especie y zona:
+
+```{r}
+d$lances %>%
+  count(year, Especie, Zona) %>%
+  pivot_wider(names_from = Zona, values_from = n) %>%
+  kable()
+```
+
+<div class="alerta">
+Las covarianzas entre F, W y S se calculan a partir de los lances, por lo que
+se necesitan **al menos 2 lances** por año, especie y zona. Si hay uno solo,
+la app calcula la biomasa igual, pero el CV y el intervalo quedan en blanco
+(`NA`). Con pocos lances (p. ej. 4) las covarianzas son poco estables.
+</div>
+
+## Hoja `parametros`
+
+Formato "largo": una fila por parámetro, para cada combinación de año,
+especie y zona.
+
+| Columna | Descripción |
+|---------|-------------|
+| `year` | Año |
+| `Especie` | `Anchoveta` / `Sardina` |
+| `Zona` | `Centro` / `Sur` |
+| `Parm` | Código del parámetro (tabla siguiente) |
+| `Mean` | Estimación del parámetro |
+| `CV` | CV de la estimación, **como proporción** (0,08 = 8 %) |
+
+Códigos de `Parm`:
+
+| `Parm` | Parámetro | Unidad | ¿Requerido? | CV |
+|--------|-----------|--------|:-----------:|----|
+| `P0` | Producción diaria de huevos | huevos · m⁻² · d⁻¹ | Sí | Sí |
+| `AD` | Área de desove (área positiva) | km² | Sí | No (vacío) |
+| `A` | Área total prospectada | km² | Informativo | No (vacío) |
+| `W` | Peso promedio de hembras maduras | g | Sí | Sí |
+| `F` | Fecundidad parcial | huevos · hembra⁻¹ | Sí | Sí |
+| `S` | Fracción diaria de hembras desovantes | d⁻¹ | Sí | Sí |
+| `R` | Proporción sexual en peso (hembras) | proporción | Sí | Opcional (vacío = 0) |
+
+<div class="alerta">
+**Reglas de validación.** Para cada año, especie y zona, `P0`, `AD`, `W`,
+`F`, `S` y `R` deben aparecer **exactamente una vez** y con `Mean` no
+vacío. Si un parámetro falta o está repetido, la app omite esa zona y emite
+una advertencia en la consola de R, por ejemplo:
+`2024 Anchoveta Centro: parámetros faltantes o duplicados (S); zona omitida`.
+</div>
+
+Ejemplo: parámetros de anchoveta, zona Centro, 2025:
+
+```{r}
+d$parametros %>%
+  filter(year == 2025, Especie == "Anchoveta", Zona == "Centro") %>%
+  kable(digits = 4)
+```
+
+### Coherencia entre `parametros` y `lances`
+
+Las medias de F, W y S en `parametros` deben ser las **medias ponderadas por
+`m`** de los lances del mismo año, especie y zona (ver
+[medias ponderadas](#medias-ponderadas)). Esto importa porque esas medias son el centro de
+las covarianzas. Para verificarlo:
+
+```{r}
+medias_lances <- d$lances %>%
+  group_by(year, Especie, Zona) %>%
+  summarise(across(c(F, W, S), ~ sum(m * .x) / sum(m)), .groups = "drop") %>%
+  pivot_longer(c(F, W, S), names_to = "Parm", values_to = "Media_lances")
+
+d$parametros %>%
+  filter(Parm %in% c("F", "W", "S")) %>%
+  select(year, Especie, Zona, Parm, Mean) %>%
+  left_join(medias_lances, by = c("year", "Especie", "Zona", "Parm")) %>%
+  mutate(`Dif (%)` = round(100 * (Mean - Media_lances) / Media_lances, 2)) %>%
+  kable(digits = 4)
+```
+
+Diferencias menores al 1 % se deben al redondeo de los valores digitados.
+
+## Hoja `historico` (opcional)
+
+Biomasa desovante total (t, Centro + Sur) de años anteriores, en formato
+"ancho":
+
+| Columna | Descripción |
+|---------|-------------|
+| `year` | Año |
+| `Anchoveta` | Biomasa total de anchoveta (t) |
+| `Sardina_comun` | Biomasa total de sardina común (t). También se aceptan `Sardina` y `Sardina común` |
+
+Los años sin crucero se dejan con `NA`. Si un año está en `historico` y
+también en `parametros`, la app usa el valor **calculado** a partir de
+`parametros`. Sin esta hoja, la serie histórica muestra solo los años
+calculados.
+
+```{r}
+tail(d$historico, 5) %>% kable()
+```
+
+## Agregar un año nuevo
+
+1. En `lances`, agregue las filas del nuevo crucero con su `year`.
+2. En `parametros`, agregue las 7 filas (`P0`, `AD`, `A`, `W`, `F`, `S`,
+   `R`) para cada especie y zona.
+3. Verifique que las medias de F, W y S coincidan con las ponderadas de los
+   lances (sección anterior).
+4. Guarde y vuelva a cargar el archivo en la app. El año nuevo aparece en
+   todas las pestañas y como punto de color en la serie histórica.
+
+# Fórmulas
+
+## Biomasa desovante
+
+Para cada año, especie y zona:
+
+$$
+B = \frac{P_0 \cdot A_D \cdot W}{R \cdot S \cdot F}
+$$
+
+donde $P_0$ es la producción diaria de huevos por unidad de área en el área
+de desove $A_D$, $W$ es el peso promedio de hembras maduras, $R$ es la
+proporción sexual en peso, $S$ es la fracción diaria de hembras desovantes y
+$F$ es la fecundidad parcial.
+
+<div class="nota">
+**Unidades.** La app no aplica factores de conversión. $B$ resulta en
+toneladas cuando $P_0$ está en huevos·m⁻²·d⁻¹, $A_D$ en km² y $W$ en g,
+porque el factor 10⁶ m²/km² se cancela con 10⁶ g/t. Si $P_0$ se expresa por
+otra unidad de área (p. ej. por 0,05 m²), debe convertirse antes de digitarlo.
+</div>
+
+## Medias ponderadas de los lances {#medias-ponderadas}
+
+F, W y S provienen de muestreos de adultos por lance y se estiman como
+medias ponderadas por el número de hembras $m_i$ del lance $i$
+($i = 1, \dots, n$):
+
+$$
+\bar{x} = \frac{\sum_{i=1}^{n} m_i\, x_i}{\sum_{i=1}^{n} m_i},
+\qquad x \in \{F, W, S\}
+$$
+
+## Covarianzas entre parámetros de adultos
+
+F, W y S se miden en los mismos lances, por lo que sus estimaciones están
+correlacionadas. La covarianza entre dos medias ponderadas $\bar{x}$ e
+$\bar{y}$ se estima como en Picquelle & Stauffer (1985):
+
+$$
+\widehat{\mathrm{Cov}}(\bar{x}, \bar{y}) =
+\frac{\sum_{i=1}^{n} m_i^2\,(x_i - \bar{x})(y_i - \bar{y})}
+     {\bar{m}^2\, n\,(n-1)}
+$$
+
+con $\bar{m} = \frac{1}{n}\sum m_i$. Las medias $\bar{x}$, $\bar{y}$ son las
+de la hoja `parametros`.
+
+## CV de la biomasa (método delta)
+
+Como $B$ es un producto y cociente de estimadores, su CV² se aproxima por el
+método delta:
+
+$$
+\mathrm{CV}^2(B) \approx
+\mathrm{CV}^2(P_0) + \mathrm{CV}^2(W) + \mathrm{CV}^2(F) +
+\mathrm{CV}^2(S) + \mathrm{CV}^2(R)
+\;-\; \frac{2\,\mathrm{Cov}(F,W)}{F\,W}
+\;-\; \frac{2\,\mathrm{Cov}(W,S)}{W\,S}
+\;+\; \frac{2\,\mathrm{Cov}(F,S)}{F\,S}
+$$
+
+El signo de cada covarianza depende de dónde está cada parámetro en la
+fórmula de $B$. Es negativo para pares numerador–denominador ($W$ con $F$,
+$W$ con $S$) y positivo para pares que están ambos en el denominador ($F$ con
+$S$). Se supone que $P_0$ (crucero de huevos) es independiente de los
+parámetros de adultos.
+
+Los CV individuales se toman de la columna `CV` de `parametros`. Si
+$\mathrm{CV}^2(B)$ resultara negativo por el aporte de las covarianzas, se
+trunca a 0. La app informa $\mathrm{CV}(B) = 100\sqrt{\mathrm{CV}^2(B)}$ en %.
+
+## Intervalo de confianza al 95 %
+
+Se usa la aproximación normal, con el límite inferior truncado en cero:
+
+$$
+\mathrm{IC}_{95\%} = \Big[\max\big(0,\; B\,(1 - 1{,}96\,\mathrm{CV})\big),\;
+B\,(1 + 1{,}96\,\mathrm{CV})\Big]
+$$
+
+## Biomasa total por especie
+
+La serie histórica y los recuadros de resumen muestran la biomasa total por
+especie como la suma de las zonas: $B_{\text{total}} = B_{\text{Centro}} +
+B_{\text{Sur}}$.
+
+## Ejemplo paso a paso
+
+Cálculo manual para anchoveta, zona Centro, 2025, comparado con la función
+`calc_zone_biomass()` de la app:
+
+```{r}
+yr <- 2025; spp <- "Anchoveta"; zona <- "Centro"
+
+p  <- d$parametros %>% filter(year == yr, Especie == spp, Zona == zona)
+gv <- function(x) p$Mean[p$Parm == x]
+gc <- function(x) { v <- p$CV[p$Parm == x]; ifelse(is.na(v), 0, v) }
+
+B <- gv("P0") * gv("AD") * gv("W") / (gv("R") * gv("S") * gv("F"))
+
+l  <- d$lances %>% filter(year == yr, Especie == spp, Zona == zona)
+n  <- nrow(l); mb <- mean(l$m)
+cv <- function(a, ma, b, mb_) sum(l$m^2 * (a - ma) * (b - mb_)) / (mb^2 * n * (n - 1))
+
+cFW <- cv(l$F, gv("F"), l$W, gv("W"))
+cWS <- cv(l$W, gv("W"), l$S, gv("S"))
+cFS <- cv(l$F, gv("F"), l$S, gv("S"))
+
+CV2 <- gc("P0")^2 + gc("W")^2 + gc("F")^2 + gc("S")^2 + gc("R")^2 -
+  2 * cFW / (gv("F") * gv("W")) -
+  2 * cWS / (gv("W") * gv("S")) +
+  2 * cFS / (gv("F") * gv("S"))
+
+data.frame(
+  Fuente = c("Cálculo manual", "App: calc_zone_biomass()"),
+  B_ton  = c(round(B), NA),
+  CV     = c(round(100 * sqrt(max(CV2, 0)), 1), NA)
+) -> ej
+
+app_res <- calc_zone_biomass(d$parametros, d$lances) %>%
+  filter(year == yr, Especie == spp, Zona == zona)
+ej$B_ton[2] <- app_res$B_ton
+ej$CV[2]    <- app_res$CV
+kable(ej)
+```
+
+## Resultados con los datos actuales
+
+```{r}
+calc_zone_biomass(d$parametros, d$lances) %>%
+  mutate(year = as.character(year)) %>%
+  rename(Año = year, `B (t)` = B_ton, `CV (%)` = CV,
+         `IC 95% inf` = IC_lo, `IC 95% sup` = IC_hi) %>%
+  kable(format.args = list(big.mark = ".", decimal.mark = ","))
+```
+
+# Uso de la app
+
+## Serie histórica
+
+Gráfico de barras de la biomasa total por especie, que une la hoja
+`historico` con los años calculados.
+
+- **Especie**: muestra una o ambas especies.
+- **Rango de años**: limita el eje temporal.
+- **Escala logarítmica**: útil cuando las biomasas difieren mucho entre años.
+- **Recortar al último año analizado**: oculta los años posteriores al
+  último año con parámetros.
+- **Destacar años analizados**: marca con un punto los años calculados en
+  esta sesión (no tomados de `historico`).
+
+Debajo del gráfico aparece la tabla con los valores.
+
+## Por zona
+
+Compara la biomasa de las zonas Centro y Sur para la especie y los años
+seleccionados. Las barras incluyen el IC 95 % y una etiqueta con $B$ y CV.
+Los recuadros superiores resumen el último año: Centro, Sur y total. La
+tabla inferior detalla $B$, CV e intervalos.
+
+## Parámetros
+
+Para un año y especie:
+
+- **Tabla de parámetros**: media y CV (%) de cada parámetro por zona.
+- **Contribución al CV²(B)**: porcentaje que aporta cada término de la
+  fórmula delta. Las barras azules aumentan la varianza y las rojas
+  (covarianzas negativas) la reducen. El panel indica el CV total.
+
+## Reporte
+
+Seleccione año y especie para generar:
+
+- **Tabla R4**: biomasa desovante y CV total por zona.
+- **Tabla R5**: estructura de varianza-covarianza (contribución % de cada
+  término al CV²).
+- **Interpretación** automática: nivel del CV (bajo ≤ 20 %, moderado
+  20–35 %, alto > 35 %) y componente dominante de la varianza.
+
+Los botones de descarga generan el reporte en `.docx` (editable en Word) o
+`.html`.
+
+# Solución de problemas
+
+| Síntoma | Causa probable | Solución |
+|---------|----------------|----------|
+| Las pestañas siguen en "Sin datos cargados" | No se ha elegido archivo, o faltan las hojas `lances`/`parametros` | Revise los nombres de las hojas |
+| Falta una zona en los resultados | Parámetro faltante o duplicado en `parametros` | Revise la advertencia en la consola de R |
+| CV e IC vacíos (`NA`) | Menos de 2 lances para esa especie, zona y año | Revise la hoja `lances` |
+| Una zona o especie no aparece aunque hay datos | Texto mal escrito (`"sur"`, `"Sur "`, `"Sardina común"` en vez de `Sardina`) | Corrija los valores de `Especie`/`Zona` |
+| Serie histórica solo con años recientes | Falta la hoja `historico` o tiene otros nombres de columna | Use `year`, `Anchoveta`, `Sardina_comun` |
+| Biomasa con orden de magnitud errado | Unidades de $P_0$ o $A_D$ distintas a las esperadas | Ver nota de unidades en la sección de fórmulas |
+
+# Referencias
+
+- Lasker, R. (ed.) (1985). *An egg production method for estimating spawning
+  biomass of pelagic fish: application to the northern anchovy, Engraulis
+  mordax*. NOAA Technical Report NMFS 36.
+- Picquelle, S. & Stauffer, G. (1985). Parameter estimation for an egg
+  production method of northern anchovy biomass assessment. En: Lasker, R.
+  (ed.), NOAA Technical Report NMFS 36, pp. 7–15.
+- Stauffer, G. & Picquelle, S. (1980). Estimates of the 1980 spawning biomass
+  of the central subpopulation of northern anchovy. *NOAA Admin. Rep.* NMFS
+  SWFC-81-4.

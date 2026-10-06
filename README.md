@@ -35,12 +35,15 @@ install.packages(c(
 
 ## Datos de entrada
 
-La app lee un único archivo Excel: **`Data/MPDH_datos.xlsx`**, con dos hojas obligatorias:
+La app lee un único archivo Excel: **`Data/MPDH_datos.xlsx`**, con dos hojas obligatorias y una opcional:
 
 | Hoja | Contenido | Columnas clave |
 |------|-----------|----------------|
-| `lances` | Parámetros reproductivos por lance | `year`, `Especie`, `Zone`, `Haul`, `m`, `F`, `W`, `S`, … |
+| `lances` | Parámetros reproductivos por lance | `year`, `Especie`, `Zona`, `Haul`, `m`, `F`, `W`, `S`, … |
 | `parametros` | Promedios y CV por zona y año | `year`, `Especie`, `Zona`, `Parm`, `Mean`, `CV` |
+| `historico` *(opcional)* | Serie histórica de biomasa total (t) | `year`, `Anchoveta`, `Sardina_comun` |
+
+> En `lances` también se acepta el nombre antiguo `Zone`; la app lo renombra a `Zona` al cargar.
 
 ### Agregar un año nuevo (ej. 2026)
 
@@ -49,7 +52,7 @@ La app lee un único archivo Excel: **`Data/MPDH_datos.xlsx`**, con dos hojas ob
 3. En la hoja `parametros`, agregar los parámetros estimados con `year = 2026`.
 4. Guardar y recargar el archivo en la app — el nuevo año aparece automáticamente.
 
-> La serie histórica 2002–2023 está hardcodeada en `app_MPDH_Biomasa.R` (`HIST_BASE`).  
+> La serie histórica se lee desde la hoja `historico`.  
 > Los años presentes en `parametros` se calculan y agregan automáticamente al gráfico histórico, destacados con un punto de color.
 
 ---
@@ -116,7 +119,9 @@ $$B = \frac{P_0 \cdot A_d \cdot W}{F \cdot S \cdot R} \quad \text{[toneladas]}$$
 
 La varianza se descompone mediante el método delta con términos de covarianza entre F, W y S:
 
-$$CV^2(B) = CV^2(P_0) + CV^2(W) + CV^2(F) + CV^2(S) - \frac{2\,\text{Cov}(F,W)}{FW} - \frac{2\,\text{Cov}(W,S)}{WS} + \frac{2\,\text{Cov}(F,S)}{FS}$$
+$$CV^2(B) = CV^2(P_0) + CV^2(W) + CV^2(F) + CV^2(S) + CV^2(R) - \frac{2\,\text{Cov}(F,W)}{FW} - \frac{2\,\text{Cov}(W,S)}{WS} + \frac{2\,\text{Cov}(F,S)}{FS}$$
+
+Detalle de fórmulas, unidades y configuración del Excel en **`Tutorial_App_MPDH.Rmd`** (compilar con `rmarkdown::render("Tutorial_App_MPDH.Rmd")`).
 
 ---
 

@@ -2,11 +2,11 @@
 # app_MPDH_Biomasa.R  v4
 # Estimador interactivo de biomasa desovante — MPDH Centro-Sur
 #
-# DATOS: MPDH_datos.xlsx  (2 hojas: lances, parametros)
+# DATOS: MPDH_datos.xlsx  (hojas: lances, parametros, historico)
 #   Seleccione el archivo desde cualquier ubicación con el botón
 #   "Abrir Excel…" en la barra superior.
 #
-# Serie histórica 2002–2023: hardcodeada internamente.
+# Serie histórica: hoja "historico" (opcional; year, Anchoveta, Sardina_comun).
 # Los años presentes en "parametros" se calculan y agregan
 # automáticamente, con puntos de color en el gráfico histórico.
 #
@@ -23,53 +23,107 @@ library(scales)
 library(officer)
 library(flextable)
 
-# ── Serie histórica hardcodeada (2002–2023) ───────────────────────────────────
-HIST_BASE <- tribble(
-  ~year, ~Anchoveta, ~`Sardina común`,
-  2002, 112323, 498337,
-  2003,     NA,     NA,
-  2004, 153150,   5186,
-  2005, 637223, 125008,
-  2006,     NA,     NA,
-  2007, 255016, 168611,
-  2008, 313432, 109162,
-  2009,  73983, 213762,
-  2010,  77613, 579715,
-  2011, 109348, 649985,
-  2012,  50772, 157893,
-  2013,  17779,  87575,
-  2014,  17303,  83554,
-  2015,  59886, 112575,
-  2016,  28197,  70296,
-  2017,     NA,     NA,
-  2018, 207744, 161023,
-  2019, 136588, 103333,
-  2020,     NA,     NA,
-  2021,  65757,  22526,
-  2022,  70829,  28222,
-  2023, 389174, 385070
-)
-
 # ── Carga de datos desde ruta arbitraria ─────────────────────────────────────
 load_data_from_path <- function(path) {
   sheets_found <- tryCatch(excel_sheets(path), error = function(e) character(0))
   out <- list(sheets = sheets_found, errors = character(0), path = path)
 
+  read_sheet <- function(sh) {
+    tryCatch(
+      read_excel(path, sheet = sh, na = "NA"),
+      error = function(e) {
+        out$errors <<- c(out$errors, paste(sh, ":", e$message))
+        NULL
+      }
+    )
+  }
+
   for (sh in c("lances", "parametros")) {
     if (sh %in% sheets_found) {
-      out[[sh]] <- tryCatch(
-        read_excel(path, sheet = sh, na = "NA"),
-        error = function(e) {
-          out$errors <<- c(out$errors, paste(sh, ":", e$message))
-          NULL
-        }
-      )
+      out[[sh]] <- read_sheet(sh)
     } else {
       out$errors <- c(out$errors, paste("Hoja no encontrada:", sh))
       out[[sh]]  <- NULL
     }
   }
+
+  # Nombre de zona uniforme: se acepta "Zone" (versión antigua) o "Zona"
+  for (sh in c("lances", "parametros")) {
+    d <- out[[sh]]
+    if (!is.null(d) && "Zone" %in% names(d) && !"Zona" %in% names(d)) {
+      out[[sh]] <- rename(d, Zona = Zone)
+    }
+  }
+
+  # Serie histórica (opcional): year, Anchoveta, Sardina_comun
+  out$historico <- tibble(year = numeric(0), Anchoveta = numeric(0),
+                          `Sardina común` = numeric(0))
+  if ("historico" %in% sheets_found) {
+    h <- read_sheet("historico")
+    if (!is.null(h)) {
+      names(h)[names(h) %in% c("Sardina_comun", "Sardina", "Sardina comun")] <- "Sardina común"
+      if (all(c("year", "Anchoveta", "Sardina común") %in% names(h))) {
+        out$historico <- h %>%
+          select(year, Anchoveta, `Sardina común`) %>%
+          mutate(across(everything(), as.numeric))
+      } else {
+        out$errors <- c(out$errors,
+                        "historico: se esperan columnas year, Anchoveta, Sardina_comun")
+      }
+    }
+  } else {
+    out$errors <- c(out$errors, "Hoja no encontrada: historico (serie histórica vacía)")
+  }
   out
+}
+
+# ── Cálculo MPDH para una zona (común a todas las pestañas) ──────────────────
+# Términos del CV²(B) por método delta, en el orden usado en tablas y gráficos
+CV_TERMS <- c("CV²(P₀)", "CV²(W)", "CV²(F)", "CV²(S)", "CV²(R)",
+              "-2·Cov(F,W)/(FW)", "-2·Cov(W,S)/(WS)", "2·Cov(F,S)/(FS)")
+
+# d: filas de "parametros" de un año-especie-zona; dl: lances correspondientes.
+# Devuelve NULL (con warning) si faltan parámetros o están duplicados.
+# Con menos de 2 lances, B se calcula pero terms y CV2 quedan NA.
+mpdh_zone <- function(d, dl, label = "") {
+  # Cada parámetro requerido debe aparecer exactamente una vez
+  req_parms <- c("P0", "AD", "W", "F", "S", "R")
+  n_parm    <- sapply(req_parms, function(p) sum(d$Parm == p & !is.na(d$Mean)))
+  if (any(n_parm != 1)) {
+    warning(sprintf(
+      "%s: parámetros faltantes o duplicados (%s); zona omitida",
+      label, paste(names(n_parm)[n_parm != 1], collapse = ", ")
+    ))
+    return(NULL)
+  }
+
+  gv  <- function(p) as.numeric(d$Mean[d$Parm == p & !is.na(d$Mean)])
+  gcv <- function(p) as.numeric(d$CV[d$Parm == p & !is.na(d$Mean)])
+
+  P0 <- gv("P0"); CVP <- gcv("P0")
+  Ad <- gv("AD")
+  W  <- gv("W");  cvW <- gcv("W")
+  F_ <- gv("F");  cvF <- gcv("F")
+  S  <- gv("S");  cvS <- gcv("S")
+  R  <- gv("R");  cvR <- gcv("R")
+  if (is.na(cvR)) cvR <- 0   # R fijo (sin incertidumbre) si no se informa CV
+
+  B <- P0 * Ad * W / (F_ * S * R)
+
+  terms <- setNames(rep(NA_real_, length(CV_TERMS)), CV_TERMS)
+  if (nrow(dl) > 1) {
+    n  <- nrow(dl); mp <- mean(dl$m)
+    m  <- dl$m; Fv <- dl$F; Wv <- dl$W; Sv <- dl$S
+    wt_cov <- function(a, ma, b, mb)
+      sum(m^2 * (a - ma) * (b - mb)) / (mp^2 * n * (n - 1))
+    cFW <- wt_cov(Fv, F_, Wv, W)
+    cFS <- wt_cov(Fv, F_, Sv, S)
+    cWS <- wt_cov(Wv, W,  Sv, S)
+    terms[] <- c(CVP^2, cvW^2, cvF^2, cvS^2, cvR^2,
+                 -2*cFW/(F_*W), -2*cWS/(W*S), 2*cFS/(F_*S))
+  }
+
+  list(B = B, terms = terms, CV2 = max(sum(terms), 0))
 }
 
 # ── Cálculo de biomasa por zona ───────────────────────────────────────────────
@@ -86,45 +140,16 @@ calc_zone_biomass <- function(params_all, lances_all) {
         d <- params %>% filter(Especie == spp, Zona == zona)
         if (nrow(d) == 0) next
 
-        gv  <- function(p) as.numeric(d$Mean[d$Parm == p])
-        gcv <- function(p) as.numeric(d$CV[d$Parm == p])
-
-        P0 <- gv("P0"); CVP <- gcv("P0")
-        At <- gv("A");  Ad  <- gv("AD")
-        W  <- gv("W");  cvW <- gcv("W")
-        F_ <- gv("F");  cvF <- gcv("F")
-        S  <- gv("S");  cvS <- gcv("S")
-        R  <- 0.5
-
-        B <- P0 * Ad * W / (F_ * S * R)
-
-        P    <- P0 * Ad * 1e6 / At
-        varP <- (CVP * P)^2
-        varW <- (cvW * W)^2
-        varF <- (cvF * F_)^2
-        varS <- (cvS * S)^2
-
-        CV_val <- NA_real_
-        dl <- lances %>% filter(Especie == spp, Zone == zona)
-        if (nrow(dl) > 1) {
-          n  <- nrow(dl); mp <- mean(dl$m)
-          m  <- dl$m; Fv <- dl$F; Wv <- dl$W; Sv <- dl$S
-          wt_cov <- function(a, ma, b, mb)
-            sum(m^2 * (a - ma) * (b - mb)) / (mp^2 * n * (n - 1))
-          cFW <- wt_cov(Fv, F_, Wv, W)
-          cFS <- wt_cov(Fv, F_, Sv, S)
-          cWS <- wt_cov(Wv, W,  Sv, S)
-          CV2 <- varP/P^2 + varW/W^2 + varF/F_^2 + varS/S^2 +
-            -2*cFW/(F_*W) - 2*cWS/(W*S) + 2*cFS/(F_*S)
-          CV_val <- sqrt(max(CV2, 0)) * 100
-        }
+        dl  <- lances %>% filter(Especie == spp, Zona == zona)
+        res <- mpdh_zone(d, dl, paste(yr, spp, zona))
+        if (is.null(res)) next
 
         out[[length(out) + 1]] <- data.frame(
           year    = yr,
           Especie = ifelse(spp == "Sardina", "Sardina común", spp),
           Zona    = zona,
-          B_ton   = round(B),
-          CV      = round(CV_val, 1),
+          B_ton   = round(res$B),
+          CV      = round(sqrt(res$CV2) * 100, 1),
           stringsAsFactors = FALSE
         )
       }
@@ -240,7 +265,7 @@ server <- function(input, output, session) {
         pivot_wider(names_from = Especie, values_from = B_ton)
     } else data.frame()
 
-    base <- HIST_BASE %>% filter(!(year %in% recent$year))
+    base <- data_r()$historico %>% filter(!(year %in% recent$year))
     bind_rows(base, recent) %>% arrange(year)
   })
 
@@ -261,7 +286,8 @@ server <- function(input, output, session) {
       p("Use el botón ", tags$b("Abrir Excel…"), " de la barra superior para seleccionar el archivo ",
         tags$code("MPDH_datos.xlsx"), " desde cualquier ubicación."),
       p("El archivo debe contener las hojas ", tags$code("lances"), " y ",
-        tags$code("parametros"), " con columna ", tags$code("year"), ".")
+        tags$code("parametros"), " con columna ", tags$code("year"),
+        ", y opcionalmente ", tags$code("historico"), " con la serie histórica.")
     )
   )
 
@@ -568,50 +594,27 @@ server <- function(input, output, session) {
     params <- d$parametros %>% filter(year == yr)
     lances <- d$lances     %>% filter(year == yr)
 
+    comp_short <- c("CV²(P₀)", "CV²(W)", "CV²(F)", "CV²(S)", "CV²(R)",
+                    "Cov(F,W)", "Cov(W,S)", "Cov(F,S)")
     rows <- list()
     for (zona in c("Centro", "Sur")) {
       dp <- params %>% filter(Especie == spp0, Zona == zona)
       if (nrow(dp) == 0) next
-
-      gv  <- function(p) as.numeric(dp$Mean[dp$Parm == p])
-      gcv <- function(p) as.numeric(dp$CV[dp$Parm == p])
-
-      P0 <- gv("P0"); CVP <- gcv("P0")
-      At <- gv("A");  Ad  <- gv("AD")
-      W  <- gv("W");  cvW <- gcv("W")
-      F_ <- gv("F");  cvF <- gcv("F")
-      S  <- gv("S");  cvS <- gcv("S")
-
-      P    <- P0 * Ad * 1e6 / At
-      varP <- (CVP*P)^2; varW <- (cvW*W)^2
-      varF <- (cvF*F_)^2; varS <- (cvS*S)^2
-
-      dl <- lances %>% filter(Especie == spp0, Zone == zona)
-      if (nrow(dl) < 2) next
-
-      n <- nrow(dl); mp <- mean(dl$m); m <- dl$m
-      Fv <- dl$F; Wv <- dl$W; Sv <- dl$S
-      wc <- function(a, ma, b, mb) sum(m^2*(a-ma)*(b-mb))/(mp^2*n*(n-1))
-
-      cFW <- wc(Fv,F_,Wv,W); cFS <- wc(Fv,F_,Sv,S); cWS <- wc(Wv,W,Sv,S)
-      tP  <- varP/P^2; tW <- varW/W^2; tF <- varF/F_^2; tS <- varS/S^2
-      tFW <- -2*cFW/(F_*W); tWS <- -2*cWS/(W*S); tFS <- 2*cFS/(F_*S)
-      CV2 <- tP + tW + tF + tS + tFW + tWS + tFS
+      dl  <- lances %>% filter(Especie == spp0, Zona == zona)
+      res <- mpdh_zone(dp, dl, paste(yr, spp0, zona))
+      if (is.null(res) || is.na(res$CV2)) next
 
       rows[[zona]] <- data.frame(
         Zona       = zona,
-        Componente = c("CV²(P₀)","CV²(W)","CV²(F)","CV²(S)",
-                       "Cov(F,W)","Cov(W,S)","Cov(F,S)"),
-        Pct        = round(c(tP,tW,tF,tS,tFW,tWS,tFS)/CV2*100, 1),
-        CV_total   = round(sqrt(CV2)*100, 1)
+        Componente = comp_short,
+        Pct        = round(res$terms / res$CV2 * 100, 1),
+        CV_total   = round(sqrt(res$CV2) * 100, 1)
       )
     }
 
     validate(need(length(rows) > 0, "Sin datos de lances."))
     df_cv <- bind_rows(rows)
-    df_cv$Componente <- factor(df_cv$Componente,
-                               levels = c("CV²(P₀)","CV²(W)","CV²(F)","CV²(S)",
-                                          "Cov(F,W)","Cov(W,S)","Cov(F,S)"))
+    df_cv$Componente <- factor(df_cv$Componente, levels = comp_short)
     df_cv$positivo <- df_cv$Pct >= 0
     labels_cv <- df_cv %>% group_by(Zona) %>% slice(1) %>%
       mutate(lab = paste0("CV total = ", CV_total, "%"))
@@ -643,42 +646,15 @@ server <- function(input, output, session) {
     rows <- list()
     for (zona in c("Centro", "Sur")) {
       dp <- params_yr %>% filter(Especie == spp0, Zona == zona)
-      dl <- lances_yr %>% filter(Especie == spp0, Zone == zona)
-      if (nrow(dp) == 0 || nrow(dl) < 2) next
-
-      gv  <- function(p) as.numeric(dp$Mean[dp$Parm == p])
-      gcv <- function(p) as.numeric(dp$CV[dp$Parm == p])
-
-      P0 <- gv("P0"); CVP <- gcv("P0")
-      At <- gv("A");  Ad  <- gv("AD")
-      W  <- gv("W");  cvW <- gcv("W")
-      F_ <- gv("F");  cvF <- gcv("F")
-      S  <- gv("S");  cvS <- gcv("S")
-
-      P    <- P0 * Ad * 1e6 / At
-      varP <- (CVP*P)^2; varW <- (cvW*W)^2
-      varF <- (cvF*F_)^2; varS <- (cvS*S)^2
-
-      n  <- nrow(dl); mp <- mean(dl$m); m <- dl$m
-      Fv <- dl$F; Wv <- dl$W; Sv <- dl$S
-      wc <- function(a, ma, b, mb) sum(m^2*(a-ma)*(b-mb))/(mp^2*n*(n-1))
-
-      cFW <- wc(Fv,F_,Wv,W); cFS <- wc(Fv,F_,Sv,S); cWS <- wc(Wv,W,Sv,S)
-
-      tP  <- varP/P^2; tW <- varW/W^2; tF <- varF/F_^2; tS <- varS/S^2
-      tFW <- -2*cFW/(F_*W); tWS <- -2*cWS/(W*S); tFS <- 2*cFS/(F_*S)
-      CV2 <- tP + tW + tF + tS + tFW + tWS + tFS
+      dl <- lances_yr %>% filter(Especie == spp0, Zona == zona)
+      if (nrow(dp) == 0) next
+      res <- mpdh_zone(dp, dl, paste(dp$year[1], spp0, zona))
+      if (is.null(res) || is.na(res$CV2)) next
 
       rows[[zona]] <- data.frame(
-        Zona              = zona,
-        `CV²(P₀)`         = round(tP /CV2*100, 1),
-        `CV²(W)`          = round(tW /CV2*100, 1),
-        `CV²(F)`          = round(tF /CV2*100, 1),
-        `CV²(S)`          = round(tS /CV2*100, 1),
-        `-2·Cov(F,W)/(FW)` = round(tFW/CV2*100, 1),
-        `-2·Cov(W,S)/(WS)` = round(tWS/CV2*100, 1),
-        `2·Cov(F,S)/(FS)` = round(tFS/CV2*100, 1),
-        CV_total          = round(sqrt(CV2)*100, 1),
+        Zona     = zona,
+        as.list(round(res$terms / res$CV2 * 100, 1)),
+        CV_total = round(sqrt(res$CV2) * 100, 1),
         check.names = FALSE
       )
     }
@@ -688,12 +664,12 @@ server <- function(input, output, session) {
   # Helper: texto de interpretación automática
   interpreta <- function(r4, r5, spp_label, yr) {
     if (is.null(r4) || nrow(r4) == 0) return("")
-    comp_cols <- c("CV²(P₀)","CV²(W)","CV²(F)","CV²(S)",
-                   "-2·Cov(F,W)/(FW)","-2·Cov(W,S)/(WS)","2·Cov(F,S)/(FS)")
+    comp_cols <- CV_TERMS
     lbl_map   <- c("CV²(P₀)" = "la producción diaria de huevos (P₀)",
                    "CV²(W)"  = "el peso promedio de hembras (W)",
                    "CV²(F)"  = "la fecundidad parcial (F)",
                    "CV²(S)"  = "la fracción diaria de hembras desovantes (S)",
+                   "CV²(R)"  = "la proporción sexual en peso (R)",
                    "-2·Cov(F,W)/(FW)" = "la covarianza negativa F–W",
                    "-2·Cov(W,S)/(WS)" = "la covarianza negativa W–S",
                    "2·Cov(F,S)/(FS)"  = "la covarianza positiva F–S")
@@ -870,8 +846,7 @@ server <- function(input, output, session) {
 
   # Flextable auxiliar para tabla R5 (negrita en mayor contribución por fila)
   make_ft_r5 <- function(r5, spp_label, yr) {
-    comp_cols <- c("CV²(P₀)","CV²(W)","CV²(F)","CV²(S)",
-                   "-2·Cov(F,W)/(FW)","-2·Cov(W,S)/(WS)","2·Cov(F,S)/(FS)")
+    comp_cols <- CV_TERMS
     df <- r5 %>% select(Zona, all_of(comp_cols), CV_total)
     ft <- flextable(df) %>%
       set_caption(paste0("Tabla R5. Estructura de varianza-covarianza — ",
@@ -956,8 +931,7 @@ server <- function(input, output, session) {
                   `IC95 inf. (t)` = fmt_t(IC_lo),
                   `IC95 sup. (t)` = fmt_t(IC_hi))
 
-      comp_cols <- c("CV²(P₀)","CV²(W)","CV²(F)","CV²(S)",
-                     "-2·Cov(F,W)/(FW)","-2·Cov(W,S)/(WS)","2·Cov(F,S)/(FS)")
+      comp_cols <- CV_TERMS
       df5 <- r5 %>% select(Zona, all_of(comp_cols), CV_total)
 
       tbl_to_html <- function(df, bold_last = FALSE, bold_max_cols = NULL) {
