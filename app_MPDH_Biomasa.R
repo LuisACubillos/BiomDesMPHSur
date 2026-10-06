@@ -812,7 +812,8 @@ server <- function(input, output, session) {
     r5 <- rep_r5_r()
     validate(need(nrow(r5) > 0, "Sin datos de lances para descomponer la varianza."))
     r5 %>% rename(`CV total (%)` = CV_total)
-  }, striped = TRUE, hover = TRUE, spacing = "s", align = "lrrrrrrrr")
+  }, striped = TRUE, hover = TRUE, spacing = "s",
+     align = paste0("l", strrep("r", length(CV_TERMS) + 1)))   # Zona + términos + CV total
 
   # ── Generadores de archivo ─────────────────────────────────────────────────
 
