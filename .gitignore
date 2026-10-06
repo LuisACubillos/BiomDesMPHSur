@@ -14,6 +14,8 @@ Data/Adultos/*.csv
 
 # Salidas compiladas de Rmd
 *.html
+# excepto el tutorial publicado en GitHub Pages
+!docs/index.html
 *.pdf
 *.tex
 *.log

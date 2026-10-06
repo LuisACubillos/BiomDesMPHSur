@@ -121,7 +121,13 @@ La varianza se descompone mediante el método delta con términos de covarianza 
 
 $$CV^2(B) = CV^2(P_0) + CV^2(W) + CV^2(F) + CV^2(S) + CV^2(R) - \frac{2\,\text{Cov}(F,W)}{FW} - \frac{2\,\text{Cov}(W,S)}{WS} + \frac{2\,\text{Cov}(F,S)}{FS}$$
 
-Detalle de fórmulas, unidades y configuración del Excel en **`Tutorial_App_MPDH.Rmd`** (compilar con `rmarkdown::render("Tutorial_App_MPDH.Rmd")`).
+Detalle de fórmulas, unidades y configuración del Excel en el **[tutorial de uso](https://luisacubillos.github.io/BiomDesMPHSur/)** (fuente: `Tutorial_App_MPDH.Rmd`).
+
+Para actualizar la versión publicada, compile el tutorial directo en `docs/`:
+
+```r
+rmarkdown::render("Tutorial_App_MPDH.Rmd", output_file = "index.html", output_dir = "docs")
+```
 
 ---
 

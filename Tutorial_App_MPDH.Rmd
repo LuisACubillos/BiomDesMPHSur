@@ -450,12 +450,12 @@ Los botones de descarga generan el reporte en `.docx` (editable en Word) o
 
 # Referencias
 
-- Lasker, R. (ed.) (1985). *An egg production method for estimating spawning
-  biomass of pelagic fish: application to the northern anchovy, Engraulis
-  mordax*. NOAA Technical Report NMFS 36.
-- Picquelle, S. & Stauffer, G. (1985). Parameter estimation for an egg
+- Lasker, R. (ed.) (1985). An egg production method for estimating spawning
+  biomass of pelagic fish: application to the northern anchovy, _Engraulis
+  mordax_. NOAA Technical Report NMFS 36.
+- Picquelle, S., Stauffer, G. (1985). Parameter estimation for an egg
   production method of northern anchovy biomass assessment. En: Lasker, R.
   (ed.), NOAA Technical Report NMFS 36, pp. 7–15.
-- Stauffer, G. & Picquelle, S. (1980). Estimates of the 1980 spawning biomass
-  of the central subpopulation of northern anchovy. *NOAA Admin. Rep.* NMFS
+- Stauffer, G., Picquelle, S. (1980). Estimates of the 1980 spawning biomass
+  of the central subpopulation of northern anchovy. NOAA Admin. Rep. NMFS
   SWFC-81-4.
